@@ -108,11 +108,11 @@ echo.
 echo Starting download and conversion...
 echo.
 
-cd /d "%~dp0src"
+:: Run from project root (package is installed with pip install -e .)
+cd /d "%~dp0"
 python -m yt2audi download "%video_url%" --output "%output_dir%" --profile "%profile_name%"
 
 set exit_code=%errorlevel%
-cd /d "%~dp0"
 
 if %exit_code% equ 0 (
     echo.
@@ -203,11 +203,10 @@ echo.
 echo Starting batch download and conversion...
 echo.
 
-cd /d "%~dp0src"
+cd /d "%~dp0"
 python -m yt2audi batch "%urls_file%" --output "%output_dir%" --profile "%profile_name%"
 
 set exit_code=%errorlevel%
-cd /d "%~dp0"
 
 if %exit_code% equ 0 (
     echo.
@@ -300,7 +299,7 @@ echo.
 echo Starting playlist download and conversion...
 echo.
 
-cd /d "%~dp0src"
+cd /d "%~dp0"
 if "%playlist_end%"=="" (
     python -m yt2audi playlist "%playlist_url%" --output "%output_dir%" --profile "%profile_name%" --start %playlist_start%
 ) else (
@@ -308,7 +307,6 @@ if "%playlist_end%"=="" (
 )
 
 set exit_code=%errorlevel%
-cd /d "%~dp0"
 
 if %exit_code% equ 0 (
     echo.
@@ -373,11 +371,10 @@ echo.
 echo Starting download...
 echo.
 
-cd /d "%~dp0src"
+cd /d "%~dp0"
 python -m yt2audi download "%video_url%" --output "%output_dir%" --skip-conversion
 
 set exit_code=%errorlevel%
-cd /d "%~dp0"
 
 if %exit_code% equ 0 (
     echo.
@@ -469,11 +466,10 @@ echo.
 echo Starting conversion...
 echo.
 
-cd /d "%~dp0src"
+cd /d "%~dp0"
 python -m yt2audi convert "%video_file%" --output "%output_dir%" --profile "%profile_name%"
 
 set exit_code=%errorlevel%
-cd /d "%~dp0"
 
 if %exit_code% equ 0 (
     echo.
@@ -598,7 +594,7 @@ set /p test_choice="Choice (0-3): "
 if "%test_choice%"=="1" (
     echo.
     echo Running download optimization test...
-    python test_download_optimization.py
+    python tests\manual\test_download_optimization.py
     echo.
     echo Press any key to continue...
     pause >nul
@@ -607,7 +603,7 @@ if "%test_choice%"=="1" (
 if "%test_choice%"=="2" (
     echo.
     echo Running foundation tests...
-    python test_foundation.py
+    python tests\manual\test_foundation.py
     echo.
     echo Press any key to continue...
     pause >nul
