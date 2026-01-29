@@ -76,84 +76,25 @@ def download(
     Example:
         yt2audi download "https://youtube.com/watch?v=..."
     """
+    from yt2audi.cli.helpers import print_header, process_single_video
+    
     try:
         # Load profile
         prof = load_profile(profile)
         configure_logging(prof.logging)
 
-        console.print(f"[bold blue]YT2Audi v{yt2audi.__version__}[/bold blue]")
-        console.print(f"Profile: {prof.profile.name}")
-        console.print(f"URL: {url}\n")
+        print_header("", yt2audi.__version__, prof.profile.name, f"URL: {url}")
 
-        # Download
-        console.print("[bold green]Step 1/3:[/bold green] Downloading video...")
+        # Initialize components
         downloader = Downloader(prof)
-
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-        ) as progress:
-            task = progress.add_task("Downloading...", total=100)
-
-            def progress_hook(d: dict) -> None:
-                if d.get("status") == "downloading":
-                    downloaded = d.get("downloaded_bytes", 0)
-                    total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
-                    if total > 0:
-                        percent = (downloaded / total) * 100
-                        progress.update(task, completed=percent)
-
-            downloaded_path = downloader.download_video(url, progress_callback=progress_hook)
-
-        console.print(f"[green][OK][/green] Downloaded: {downloaded_path}\n")
-
-        if skip_conversion:
-            console.print("[yellow]Skipping conversion (--skip-conversion)[/yellow]")
-            return
-
-        # Convert
-        console.print("[bold green]Step 2/3:[/bold green] Converting video...")
         converter = Converter(prof)
+        output_dir = output or Path(prof.output.output_dir)
 
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        ) as progress:
-            task = progress.add_task("Converting...", total=100)
-
-            def convert_progress(percent: float, stage: str) -> None:
-                progress.update(task, completed=percent, description=stage)
-
-            output_dir = output or Path(prof.output.output_dir)
-            converted_path = converter.convert_video(
-                downloaded_path,
-                output_dir=output_dir,
-                progress_callback=convert_progress,
-            )
-
-        console.print(f"[green][OK][/green] Converted: {converted_path}\n")
-
-        # Handle file size
-        console.print("[bold green]Step 3/3:[/bold green] Checking file size...")
-        final_paths = Splitter.handle_size_exceed(
-            converted_path,
-            prof.output.max_file_size_gb,
-            prof.output.on_size_exceed,
-            output_dir,
+        # Process video
+        final_paths = process_single_video(
+            url, prof, output_dir, downloader, converter,
+            show_progress=True, skip_conversion=skip_conversion
         )
-
-        if len(final_paths) > 1:
-            console.print(f"[yellow]⚠[/yellow] File split into {len(final_paths)} parts:")
-            for i, path in enumerate(final_paths, 1):
-                size_mb = path.stat().st_size / 1024 / 1024
-                console.print(f"  Part {i}: {path.name} ({size_mb:.1f} MB)")
-        else:
-            size_mb = final_paths[0].stat().st_size / 1024 / 1024
-            console.print(f"[green][OK][/green] Final: {final_paths[0].name} ({size_mb:.1f} MB)")
 
         console.print("\n[bold green]Complete![/bold green]")
 
@@ -186,6 +127,8 @@ def batch(
     Example:
         yt2audi batch urls.txt
     """
+    from yt2audi.cli.helpers import print_header, print_summary, process_single_video
+    
     try:
         if not urls_file.exists():
             console.print(f"[bold red]Error:[/bold red] File not found: {urls_file}")
@@ -207,9 +150,8 @@ def batch(
         prof = load_profile(profile)
         configure_logging(prof.logging)
 
-        console.print(f"[bold blue]YT2Audi v{yt2audi.__version__} - Batch Mode[/bold blue]")
-        console.print(f"Profile: {prof.profile.name}")
-        console.print(f"Videos to process: {len(urls)}\n")
+        print_header("Batch Mode", yt2audi.__version__, prof.profile.name, 
+                    f"Videos to process: {len(urls)}")
 
         downloader = Downloader(prof)
         converter = Converter(prof)
@@ -222,33 +164,18 @@ def batch(
             console.print(f"\n[bold cyan]Processing {i}/{len(urls)}:[/bold cyan] {url}")
 
             try:
-                # Download
-                console.print("  Downloading...")
-                downloaded = downloader.download_video(url)
-
-                # Convert
-                console.print("  Converting...")
-                converted = converter.convert_video(downloaded, output_dir=output_dir)
-
-                # Handle size
-                final_paths = Splitter.handle_size_exceed(
-                    converted,
-                    prof.output.max_file_size_gb,
-                    prof.output.on_size_exceed,
-                    output_dir,
+                process_single_video(
+                    url, prof, output_dir, downloader, converter, 
+                    show_progress=False
                 )
-
-                console.print(f"  [green][OK][/green] Success: {final_paths[0].name}")
+                console.print(f"  [green]✓[/green] Success")
                 succeeded += 1
 
             except Exception as e:
-                console.print(f"  [red][FAIL][/red] Failed: {e}")
+                console.print(f"  [red]✗[/red] Failed: {e}")
                 failed += 1
 
-        console.print(f"\n[bold]Summary:[/bold]")
-        console.print(f"  Total: {len(urls)}")
-        console.print(f"  [green]Succeeded: {succeeded}[/green]")
-        console.print(f"  [red]Failed: {failed}[/red]")
+        print_summary(len(urls), succeeded, failed)
 
     except YT2AudiError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
