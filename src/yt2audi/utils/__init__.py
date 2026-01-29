@@ -11,6 +11,7 @@ from yt2audi.utils.validation import (
     is_playlist_url,
     is_valid_url,
     is_youtube_url,
+    sanitize_path,
     validate_file_path,
 )
 
@@ -24,5 +25,6 @@ __all__ = [
     "is_playlist_url",
     "is_valid_url",
     "is_youtube_url",
+    "sanitize_path",
     "validate_file_path",
 ]
