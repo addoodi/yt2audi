@@ -1,0 +1,85 @@
+# High Quality Profile
+# For exFAT USB drives (no 4GB limit)
+
+[profile]
+name = "High Quality"
+description = "Maximum quality for exFAT USB drives (no file size limit)"
+version = "1.0.0"
+
+[video]
+# Higher resolution allowed
+max_width = 1920
+max_height = 1080
+maintain_aspect_ratio = true
+
+# Codec settings
+codec = "h264"
+profile = "high"
+level = "5.1"
+pixel_format = "yuv420p"
+
+# Quality settings (better quality)
+max_bitrate_mbps = "auto"
+max_fps = 60               # Allow higher frame rates
+quality_cq = 20            # Higher quality (lower CQ)
+
+# Encoder priority
+encoder_priority = ["h264_nvenc", "h264_amf", "h264_qsv", "libx264"]
+
+extra_video_args = []
+
+[audio]
+codec = "aac"
+bitrate_kbps = 192         # Higher audio bitrate
+sample_rate = 48000        # Higher sample rate
+channels = 2
+extra_audio_args = []
+
+[subtitles]
+embed = true
+languages = ["en", "ar"]
+auto_generate = false
+burn_in = false
+
+[output]
+container = "mp4"
+faststart = true
+output_dir = "./output"
+filename_template = "{title}_{id}.{ext}"
+
+# No file size limit for exFAT
+max_file_size_gb = 100.0
+on_size_exceed = "warn"    # Just warn, don't split
+
+split_part_template = "{stem}_part{num:03d}.{ext}"
+target_bitrate_reduction = 0.8
+
+[transfer]
+usb_auto_copy = false
+usb_mount_path = ""
+usb_subdir = "Videos"
+
+network_copy = false
+network_path = ""
+network_subdir = ""
+
+verify_checksum = true
+delete_after_transfer = false
+
+[download]
+format_preference = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+download_archive = "~/.config/yt2audi/archive.txt"
+# rate_limit_mbps - omitted means no rate limit
+retries = 3
+fragment_retries = 10
+
+playlist_start = 1
+# playlist_end - omitted means download all videos
+playlist_reverse = false
+
+[logging]
+level = "INFO"
+format = "json"
+log_file = "~/.config/yt2audi/logs/yt2audi.log"
+rotation_size_mb = 10
+rotation_count = 5

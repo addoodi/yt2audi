@@ -1,0 +1,117 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Poetry
+poetry.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# Logs
+*.log
+logs/
+
+# Project specific
+output/
+temp/
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.mp3
+
+# Keep example files but ignore downloads
+!tests/fixtures/**/*.mp4
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Legacy batch script files (keep for now)
+!download-convert.bat
+!yt-dlp.exe
+
+# Config (user-specific)
+.config/
+
+# PyInstaller
+*.spec
+
+# Build artifacts
+_internal/
+
+# Documentation archives
+docs/archive/
+docs/sessions/
+
+# Baseline metrics
+baseline_metrics/
+
+# IDE specific
+.claude/
+.cursor/
+*.code-workspace
+
+# OS specific files
+nul
+desktop.ini
+
+# Large binaries (download from releases instead)
+yt-dlp_win.zip
+
+# Test outputs
+test_output/
+regression_test/
+phase_reports/

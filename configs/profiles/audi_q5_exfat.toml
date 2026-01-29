@@ -1,0 +1,94 @@
+# Audi Q5 MMI Profile - exFAT/NTFS USB (No File Size Limits)
+# Use this if your USB is formatted as exFAT or NTFS (not FAT32)
+# No need for file splitting - files can be any size!
+
+[profile]
+name = "Audi Q5 MMI - exFAT/NTFS"
+description = "For exFAT/NTFS USB - No file size limits! Official specs: 720×576, 2 Mbps, 25fps"
+version = "1.0.0"
+
+[video]
+# Resolution constraints (Official Audi Q5 2019 spec: 720×576 max)
+max_width = 720
+max_height = 576
+maintain_aspect_ratio = true
+
+# Codec settings (H.264 Main profile for compatibility)
+codec = "h264"
+profile = "main"
+level = "4.0"
+pixel_format = "yuv420p"
+
+# Quality settings (Official spec: max 2 Mbps bitrate, 25 fps)
+max_bitrate_mbps = 2.0     # Official max: 2,000 kbit/s
+max_fps = 25               # Official max: 25 fps
+quality_cq = 24            # Good quality
+
+# Encoder priority (ordered fallback: NVENC → AMF → QuickSync → CPU)
+encoder_priority = ["h264_nvenc", "h264_amf", "h264_qsv", "libx264"]
+
+# Advanced FFmpeg options (empty for defaults)
+extra_video_args = []
+
+[audio]
+codec = "aac"
+bitrate_kbps = 128
+sample_rate = 44100
+channels = 2
+extra_audio_args = []
+
+[subtitles]
+embed = true
+languages = ["en", "ar"]
+auto_generate = false
+burn_in = false
+
+[output]
+container = "mp4"
+faststart = true
+output_dir = "./output"
+filename_template = "{title}_{id}.{ext}"
+
+# NO FILE SIZE LIMIT! exFAT and NTFS support files >4GB
+# Your Audi Q5 supports exFAT and NTFS USB drives
+max_file_size_gb = 100.0   # Effectively unlimited
+on_size_exceed = "warn"    # Just warn, don't split (files can be any size)
+
+# Split settings (not used with this profile)
+split_part_template = "{stem}_part{num:03d}.{ext}"
+
+# Compress settings
+target_bitrate_reduction = 0.8
+
+[transfer]
+# USB auto-copy (disabled by default)
+usb_auto_copy = false
+usb_mount_path = ""
+usb_subdir = "Videos"
+
+# Network transfer (disabled by default)
+network_copy = false
+network_path = ""
+network_subdir = ""
+
+# Transfer options
+verify_checksum = true
+delete_after_transfer = false
+
+[download]
+# yt-dlp format selection (auto-optimized by default)
+format_preference = "auto"
+download_archive = "~/.config/yt2audi/archive.txt"
+retries = 3
+fragment_retries = 10
+
+# Playlist settings
+playlist_start = 1
+playlist_reverse = false
+
+[logging]
+level = "INFO"
+format = "json"
+log_file = "~/.config/yt2audi/logs/yt2audi.log"
+rotation_size_mb = 10
+rotation_count = 5
