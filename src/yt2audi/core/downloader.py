@@ -167,6 +167,16 @@ class Downloader:
             "no_warnings": False,
             "quiet": False,
             "no_color": True,
+            # Bypassing 403s and blocklists:
+            # Force mobile clients which are often less restricted than web clients
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios", "web"],
+                    "player_skip": ["webpage", "configs", "js"],
+                }
+            },
+            # Use IPv4 as IPv6 often triggers blocks
+            "source_address": "0.0.0.0",
         }
 
         # Download archive for resume functionality

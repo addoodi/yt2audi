@@ -10,7 +10,8 @@ tomli==2.4.0
 tomli-w==1.2.0
 
 # Video processing
-yt-dlp==2025.12.8
+# SECURITY EXCEPTION: yt-dlp must be updated frequently to bypass blocks
+yt-dlp>=2025.01.01
 ffmpeg-python==0.2.0
 
 # CLI and UI
