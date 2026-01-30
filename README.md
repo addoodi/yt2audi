@@ -8,12 +8,13 @@
 
 ## 📋 Project Status & Documentation
 
+## 📋 Project Status & Documentation
+
 > **Current Status:** Phase 2 (Performance & Testing) - Active Development
 
-- 📅 **[Roadmap & Way Forward](ROADMAP.md)** - Future plans and development phases
-- 📊 **[Implementation Progress](baseline_metrics/implementation_progress.md)** - Current stage and completed improvements
-- 📑 **[Project Analysis & Plan](https://github.com/addoodi/yt2audi/wiki)** - Detailed implementation plan (Wiki)
-- 📝 **[Session Summaries](docs/sessions/)** - detailed record of changes
+- 📘 **[Development Documentation](DEVELOPMENT.md)** - Combined Project Plan, Roadmap, and Implementation Status
+- 📑 **[Wiki](https://github.com/addoodi/yt2audi/wiki)** - Detailed documentation
+- 📝 **[Session Summaries](docs/sessions/)** - Record of changes
 
 ## Features
 
