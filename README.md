@@ -1,6 +1,19 @@
 # YT2Audi
+**Cross-platform YouTube downloader and converter optimized for Audi MMI systems.**
 
-Cross-platform YouTube downloader and converter optimized for Audi Q5 MMI/MIB2/3 infotainment systems.
+[![CI](https://github.com/addoodi/yt2audi/actions/workflows/ci.yml/badge.svg)](https://github.com/addoodi/yt2audi/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
+## 📋 Project Status & Documentation
+
+> **Current Status:** Phase 2 (Performance & Testing) - Active Development
+
+- 📅 **[Roadmap & Way Forward](ROADMAP.md)** - Future plans and development phases
+- 📊 **[Implementation Progress](baseline_metrics/implementation_progress.md)** - Current stage and completed improvements
+- 📑 **[Project Analysis & Plan](https://github.com/addoodi/yt2audi/wiki)** - Detailed implementation plan (Wiki)
+- 📝 **[Session Summaries](docs/sessions/)** - detailed record of changes
 
 ## Features
 
