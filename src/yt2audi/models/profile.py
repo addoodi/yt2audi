@@ -109,6 +109,7 @@ class SubtitleConfig(BaseModel):
 
     embed: bool = Field(default=True)
     languages: list[str] = Field(default_factory=lambda: ["en", "ar"])
+    translate_to: list[str] = Field(default_factory=list, description="Target languages for translation (e.g. ['ar'])")
     auto_generate: bool = Field(default=False)
     burn_in: bool = Field(default=False)
 
@@ -175,6 +176,11 @@ class DownloadConfig(BaseModel):
     playlist_start: int = Field(default=1, ge=1)
     playlist_end: int | None = Field(default=None, ge=1)
     playlist_reverse: bool = Field(default=False)
+
+    # Authentication / Anti-bot
+    cookies_from_browser: str | None = Field(default=None, description="Browser to load cookies from (e.g. 'chrome')")
+    cookies_file: str | None = Field(default=None, description="Path to cookies.txt")
+    po_token: str | None = Field(default=None, description="GVS PO Token for iOS/Android clients")
 
 
 class LoggingConfig(BaseModel):
@@ -248,8 +254,8 @@ class Profile(BaseModel):
             raise ConfigError(f"Failed to write profile to {path}: {e}") from e
 
 
-class AppConfig(BaseModel):
-    """Application-level configuration."""
+class AppSettings(BaseModel):
+    """General application settings."""
 
     default_profile: str = Field(default="audi_q5_mmi")
     concurrent_downloads: int = Field(default=2, ge=1, le=10)
@@ -261,7 +267,17 @@ class AppConfig(BaseModel):
     ytdlp_auto_update: bool = Field(default=False)
     app_auto_update: bool = Field(default=False)
 
-    # UI settings
+
+class UISettings(BaseModel):
+    """UI settings."""
+
     theme: Literal["light", "dark", "auto"] = Field(default="dark")
     show_notifications: bool = Field(default=True)
     minimize_to_tray: bool = Field(default=False)
+
+
+class AppConfig(BaseModel):
+    """Application-level configuration."""
+
+    app: AppSettings = Field(default_factory=AppSettings)
+    ui: UISettings = Field(default_factory=UISettings)

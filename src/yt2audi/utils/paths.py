@@ -26,11 +26,11 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
     # Remove invalid characters for Windows/Unix
     filename = re.sub(r'[<>:"/\\|?*]', "", filename)
 
-    # Replace multiple spaces with single space
-    filename = re.sub(r"\s+", " ", filename)
-
     # Remove leading/trailing dots and spaces
     filename = filename.strip(". ")
+
+    # Replace multiple spaces with underscores (to match yt-dlp restrictfilenames)
+    filename = re.sub(r"\s+", "_", filename)
 
     # Truncate if too long (leave room for extension)
     if len(filename) > max_length:

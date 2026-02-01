@@ -1,7 +1,7 @@
 """Main CLI application using Typer."""
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Annotated
 
 import typer
 from rich.console import Console
@@ -19,6 +19,56 @@ from yt2audi.config import list_available_profiles, load_profile
 from yt2audi.core import Converter, Downloader, Splitter
 from yt2audi.exceptions import ConversionError, DownloadError, YT2AudiError
 from yt2audi.utils import configure_logging
+
+import click
+# Monkeypatch to fix Typer/Click incompatibility
+# Typer calls make_metavar() without ctx, but Click 8.x requires it
+_original_make_metavar = click.Parameter.make_metavar
+
+def _patched_make_metavar(self, ctx=None):
+    # If ctx is missing, try to get current context or pass safe fallback
+    if ctx is None:
+        ctx = click.get_current_context(silent=True)
+    return _original_make_metavar(self, ctx=ctx)
+
+click.Parameter.make_metavar = _patched_make_metavar
+
+# Helper for manual arg parsing
+def _manual_parse_args(args: list[str], value_options: set[str]) -> tuple[list[str], dict[str, Any]]:
+    positional = []
+    options = {}
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("-"):
+            # Handle --opt=value format
+            if "=" in arg:
+                opt, val = arg.split("=", 1)
+                options[opt] = val
+                i += 1
+                continue
+
+            # Check if this option takes a value
+            takes_value = False
+            for opt in value_options:
+                if arg == opt:
+                    takes_value = True
+                    break
+            
+            if takes_value:
+                if i + 1 < len(args) and not args[i+1].startswith("-"):
+                    options[arg] = args[i+1]
+                    i += 2
+                else:
+                    options[arg] = True # Treat as flag if value missing nearby
+                    i += 1
+            else:
+                options[arg] = True
+                i += 1
+        else:
+            positional.append(arg)
+            i += 1
+    return positional, options
 
 app = typer.Typer(
     name="yt2audi",
@@ -50,27 +100,36 @@ def main(
     pass
 
 
-@app.command()
-def download(
-    url: str = typer.Argument(..., help="YouTube video URL"),
-    profile: str = typer.Option(
-        "audi_q5_mmi",
-        "--profile",
-        "-p",
-        help="Profile name to use",
-    ),
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output directory",
-    ),
-    skip_conversion: bool = typer.Option(
-        False,
-        "--skip-conversion",
-        help="Download only, skip conversion",
-    ),
-) -> None:
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def download(ctx: typer.Context) -> None:
+    """Download and convert a single YouTube video.
+
+    Arguments:
+        url: YouTube video URL
+
+    Options:
+        --profile, -p: Profile name to use
+        --output, -o: Output directory
+        --skip-conversion: Download only
+    """
+    value_opts = {"--profile", "-p", "--output", "-o"}
+    pos_args, opts = _manual_parse_args(ctx.args, value_opts)
+
+    if not pos_args:
+        console.print("[bold red]Error:[/bold red] Missing argument 'URL'")
+        raise typer.Exit(code=1)
+
+    url = pos_args[0]
+    
+    profile = opts.get("--profile") or opts.get("-p") or "audi_q5_mmi"
+    if profile is True: profile = "audi_q5_mmi"
+    
+    output = opts.get("--output") or opts.get("-o")
+    if output: output = Path(str(output))
+    
+    skip_conversion = opts.get("--skip-conversion") is True
     """Download and convert a single YouTube video.
 
     Example:
@@ -106,27 +165,38 @@ def download(
         raise typer.Exit(code=1)
 
 
-@app.command()
-def batch(
-    urls_file: Path = typer.Argument(..., help="Text file with YouTube URLs (one per line)"),
-    profile: str = typer.Option(
-        "audi_q5_mmi",
-        "--profile",
-        "-p",
-        help="Profile name to use",
-    ),
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output directory",
-    ),
-) -> None:
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def batch(ctx: typer.Context):
     """Download and convert multiple videos from a file.
-
-    Example:
-        yt2audi batch urls.txt
+    
+    Arguments:
+        urls_file: Text file with YouTube URLs (one per line)
+        
+    Options:
+        --profile, -p: Profile name to use
+        --output, -o: Output directory
     """
+    # Manual parsing: value options
+    value_opts = {"--profile", "-p", "--output", "-o"}
+    pos_args, opts = _manual_parse_args(ctx.args, value_opts)
+
+    if not pos_args:
+        console.print("[bold red]Error:[/bold red] Missing argument 'URLS_FILE'")
+        raise typer.Exit(code=1)
+        
+    urls_file = Path(pos_args[0])
+    
+    profile = opts.get("--profile") or opts.get("-p") or "audi_q5_mmi"
+    if profile is True: profile = "audi_q5_mmi" # Handle case where value missing
+    
+    output = opts.get("--output") or opts.get("-o")
+    if output: output = Path(str(output))
+
+    from yt2audi.cli.helpers import print_header, print_summary, process_single_video
+
+
     from yt2audi.cli.helpers import print_header, print_summary, process_single_video
     
     try:
@@ -153,28 +223,46 @@ def batch(
         print_header("Batch Mode", yt2audi.__version__, prof.profile.name, 
                     f"Videos to process: {len(urls)}")
 
+        from yt2audi.cli.helpers import BatchProgressManager
+        from yt2audi.core import ProcessingPipeline
+        import asyncio
+
         downloader = Downloader(prof)
         converter = Converter(prof)
         output_dir = output or Path(prof.output.output_dir)
 
-        succeeded = 0
-        failed = 0
+        # Initialize pipeline
+        # Use concurrency settings from app config if available, else defaults
+        try:
+            from yt2audi.config import load_app_config
+            app_cfg = load_app_config()
+            max_dl = app_cfg.app.concurrent_downloads
+            max_cv = app_cfg.app.concurrent_conversions
+        except Exception:
+            max_dl = 2
+            max_cv = 1
 
-        for i, url in enumerate(urls, 1):
-            console.print(f"\n[bold cyan]Processing {i}/{len(urls)}:[/bold cyan] {url}")
+        pipeline = ProcessingPipeline(
+            prof, 
+            max_concurrent_downloads=max_dl,
+            max_concurrent_conversions=max_cv
+        )
 
-            try:
-                process_single_video(
-                    url, prof, output_dir, downloader, converter, 
-                    show_progress=False
+        progress_manager = BatchProgressManager(console)
+        
+        with progress_manager:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            results = loop.run_until_complete(
+                pipeline.run_batch(
+                    urls, 
+                    output_dir, 
+                    progress_callback=progress_manager.get_callback()
                 )
-                console.print(f"  [green]✓[/green] Success")
-                succeeded += 1
+            )
 
-            except Exception as e:
-                console.print(f"  [red]✗[/red] Failed: {e}")
-                failed += 1
-
+        succeeded = len(results)
+        failed = len(urls) - succeeded
         print_summary(len(urls), succeeded, failed)
 
     except YT2AudiError as e:
@@ -182,22 +270,39 @@ def batch(
         raise typer.Exit(code=1)
 
 
-@app.command()
-def playlist(
-    url: str = typer.Argument(..., help="YouTube playlist URL"),
-    profile: str = typer.Option(
-        "audi_q5_mmi",
-        "--profile",
-        "-p",
-        help="Profile name to use",
-    ),
-    output: Optional[Path] = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output directory",
-    ),
-) -> None:
+@app.command(
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
+def playlist(ctx: typer.Context) -> None:
+    """Download and convert an entire YouTube playlist.
+    
+    Arguments:
+        url: YouTube playlist URL
+
+    Options:
+        --profile, -p: Profile name to use
+        --output, -o: Output directory
+        --start: Playlist start index
+        --end: Playlist end index
+    """
+    value_opts = {"--profile", "-p", "--output", "-o", "--start", "--end"}
+    pos_args, opts = _manual_parse_args(ctx.args, value_opts)
+    
+    if not pos_args:
+        console.print("[bold red]Error:[/bold red] Missing argument 'URL'")
+        raise typer.Exit(code=1)
+        
+    url = pos_args[0]
+    
+    profile = opts.get("--profile") or opts.get("-p") or "audi_q5_mmi"
+    if profile is True: profile = "audi_q5_mmi"
+    
+    output = opts.get("--output") or opts.get("-o")
+    if output: output = Path(str(output))
+    
+    start = int(opts.get("--start", 1))
+    end = opts.get("--end")
+    if end: end = int(end)
     """Download and convert an entire YouTube playlist.
 
     Example:
@@ -211,35 +316,56 @@ def playlist(
         console.print(f"[bold blue]YT2Audi v{yt2audi.__version__} - Playlist Mode[/bold blue]")
         console.print(f"Profile: {prof.profile.name}")
         console.print(f"Playlist URL: {url}\n")
+        
+        # Update profile with CLI overrides
+        prof.download.playlist_start = start
+        prof.download.playlist_end = end
+
+        from yt2audi.cli.helpers import BatchProgressManager, print_summary
+        from yt2audi.core import ProcessingPipeline
+        import asyncio
 
         downloader = Downloader(prof)
-        converter = Converter(prof)
         output_dir = output or Path(prof.output.output_dir)
 
-        # Download playlist
-        console.print("[bold green]Downloading playlist...[/bold green]")
-        downloaded_videos = downloader.download_playlist(url, output_dir=output_dir)
+        # 1. Extract URLs from playlist
+        console.print("[bold green]Extracting playlist information...[/bold green]")
+        urls = downloader.get_playlist_urls(url)
+        
+        if not urls:
+            console.print("[yellow]No videos found in playlist or failed to extract info.[/yellow]")
+            return
 
-        console.print(f"[green][OK][/green] Downloaded {len(downloaded_videos)} videos\n")
+        console.print(f"[green][OK][/green] Found {len(urls)} videos\n")
 
-        # Convert each video
-        console.print("[bold green]Converting videos...[/bold green]")
-        for i, video_path in enumerate(downloaded_videos, 1):
-            console.print(f"  [{i}/{len(downloaded_videos)}] {video_path.name}")
+        # 2. Initialize pipeline
+        try:
+            from yt2audi.config import load_app_config
+            app_cfg = load_app_config()
+            max_dl = app_cfg.app.concurrent_downloads
+            max_cv = app_cfg.app.concurrent_conversions
+        except Exception:
+            max_dl = 2
+            max_cv = 1
 
-            try:
-                converted = converter.convert_video(video_path, output_dir=output_dir)
-                Splitter.handle_size_exceed(
-                    converted,
-                    prof.output.max_file_size_gb,
-                    prof.output.on_size_exceed,
-                    output_dir,
+        pipeline = ProcessingPipeline(prof, max_dl, max_cv)
+        progress_manager = BatchProgressManager(console)
+        
+        # 3. Process concurrently
+        with progress_manager:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            results = loop.run_until_complete(
+                pipeline.run_batch(
+                    urls, 
+                    output_dir, 
+                    progress_callback=progress_manager.get_callback()
                 )
-                console.print(f"    [green][OK][/green] Complete")
-            except Exception as e:
-                console.print(f"    [red][FAIL][/red] Failed: {e}")
+            )
 
-        console.print("\n[bold green]Playlist complete![/bold green]")
+        succeeded = len(results)
+        failed = len(urls) - succeeded
+        print_summary(len(urls), succeeded, failed)
 
     except YT2AudiError as e:
         console.print(f"[bold red]Error:[/bold red] {e}")

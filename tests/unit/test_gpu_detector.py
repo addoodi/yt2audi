@@ -50,15 +50,15 @@ class TestGPUInfo:
 class TestDetectNvidiaGPU:
     """Test suite for NVIDIA GPU detection."""
 
-    @patch("yt2audi.core.gpu_detector.py3nvml")
+    @patch("yt2audi.core.gpu_detector.nvml")
     def test_detect_nvidia_gpu_found(self, mock_nvml: Mock) -> None:
         """Test NVIDIA GPU detection when GPU is found."""
         # Mock NVML functions
-        mock_nvml.py3nvml.nvmlInit.return_value = None
-        mock_nvml.py3nvml.nvmlDeviceGetCount.return_value = 1
-        mock_nvml.py3nvml.nvmlDeviceGetHandleByIndex.return_value = MagicMock()
-        mock_nvml.py3nvml.nvmlDeviceGetName.return_value = "NVIDIA RTX 4090"
-        mock_nvml.py3nvml.nvmlShutdown.return_value = None
+        mock_nvml.nvmlInit.return_value = None
+        mock_nvml.nvmlDeviceGetCount.return_value = 1
+        mock_nvml.nvmlDeviceGetHandleByIndex.return_value = MagicMock()
+        mock_nvml.nvmlDeviceGetName.return_value = "NVIDIA RTX 4090"
+        mock_nvml.nvmlShutdown.return_value = None
 
         result = detect_nvidia_gpu()
 
@@ -67,15 +67,15 @@ class TestDetectNvidiaGPU:
         assert "RTX 4090" in result.name
         assert result.has_encoder is True
 
-    @patch("yt2audi.core.gpu_detector.py3nvml")
+    @patch("yt2audi.core.gpu_detector.nvml")
     def test_detect_nvidia_gpu_bytes_name(self, mock_nvml: Mock) -> None:
         """Test NVIDIA GPU detection with bytes name."""
         # Mock NVML functions with bytes return
-        mock_nvml.py3nvml.nvmlInit.return_value = None
-        mock_nvml.py3nvml.nvmlDeviceGetCount.return_value = 1
-        mock_nvml.py3nvml.nvmlDeviceGetHandleByIndex.return_value = MagicMock()
-        mock_nvml.py3nvml.nvmlDeviceGetName.return_value = b"NVIDIA GTX 1080"
-        mock_nvml.py3nvml.nvmlShutdown.return_value = None
+        mock_nvml.nvmlInit.return_value = None
+        mock_nvml.nvmlDeviceGetCount.return_value = 1
+        mock_nvml.nvmlDeviceGetHandleByIndex.return_value = MagicMock()
+        mock_nvml.nvmlDeviceGetName.return_value = b"NVIDIA GTX 1080"
+        mock_nvml.nvmlShutdown.return_value = None
 
         result = detect_nvidia_gpu()
 
@@ -83,23 +83,23 @@ class TestDetectNvidiaGPU:
         assert "GTX 1080" in result.name
         assert isinstance(result.name, str)
 
-    @patch("yt2audi.core.gpu_detector.py3nvml")
+    @patch("yt2audi.core.gpu_detector.nvml")
     def test_detect_nvidia_gpu_not_found(self, mock_nvml: Mock) -> None:
         """Test NVIDIA GPU detection when no GPU found."""
-        mock_nvml.py3nvml.nvmlInit.return_value = None
-        mock_nvml.py3nvml.nvmlDeviceGetCount.return_value = 0
-        mock_nvml.py3nvml.nvmlShutdown.return_value = None
+        mock_nvml.nvmlInit.return_value = None
+        mock_nvml.nvmlDeviceGetCount.return_value = 0
+        mock_nvml.nvmlShutdown.return_value = None
 
         result = detect_nvidia_gpu()
 
         assert result is None
 
+    @patch("yt2audi.core.gpu_detector.nvml", None)
     def test_detect_nvidia_gpu_import_error(self) -> None:
         """Test NVIDIA GPU detection when py3nvml not available."""
-        with patch.dict("sys.modules", {"py3nvml": None, "py3nvml.py3nvml": None}):
-            result = detect_nvidia_gpu()
-            # Should handle import error gracefully
-            assert result is None
+        result = detect_nvidia_gpu()
+        # Should handle import error gracefully
+        assert result is None
 
 
 class TestDetectAMDGPU:
@@ -375,27 +375,27 @@ class TestGetEncoderExtraArgs:
     def test_get_nvenc_extra_args(self) -> None:
         """Test getting NVENC extra arguments."""
         args = get_encoder_extra_args(EncoderType.NVENC_H264, quality_cq=24)
-        assert "-rc" in args
+        assert "-rc:v:0" in args
         assert "vbr" in args
-        assert "-cq" in args
+        assert "-cq:v:0" in args
         assert "24" in args
 
     def test_get_amf_extra_args(self) -> None:
         """Test getting AMF extra arguments."""
         args = get_encoder_extra_args(EncoderType.AMF_H264, quality_cq=22)
-        assert "-rc" in args
+        assert "-rc:v:0" in args
         assert "vbr_latency" in args
-        assert "-qp_i" in args
+        assert "-qp_i:v:0" in args
         assert "22" in args
 
     def test_get_qsv_extra_args(self) -> None:
         """Test getting QuickSync extra arguments."""
         args = get_encoder_extra_args(EncoderType.QSV_H264, quality_cq=25)
-        assert "-global_quality" in args
+        assert "-global_quality:v:0" in args
         assert "25" in args
 
     def test_get_libx264_extra_args(self) -> None:
         """Test getting libx264 extra arguments."""
         args = get_encoder_extra_args(EncoderType.LIBX264, quality_cq=23)
-        assert "-crf" in args
+        assert "-crf:v:0" in args
         assert "23" in args

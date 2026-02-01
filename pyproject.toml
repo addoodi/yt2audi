@@ -53,6 +53,12 @@ rich = "^13.0.0"
 structlog = "^24.0.0"
 watchdog = "^4.0.0"
 
+# Web UI (Phase 4)
+fastapi = "^0.109.0"
+uvicorn = {extras = ["standard"], version = "^0.27.0"}
+jinja2 = "^3.1.0"
+python-multipart = "^0.0.7"
+
 [tool.poetry.extras]
 gui = ["PyQt6"]
 

@@ -68,14 +68,10 @@ class Job(BaseModel):
     # Additional data
     extra_data: dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        """Pydantic config."""
-
-        json_encoders = {
-            UUID: str,
-            Path: str,
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+    }
 
     def mark_downloading(self) -> None:
         """Mark job as downloading."""

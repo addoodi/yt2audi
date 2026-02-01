@@ -83,7 +83,8 @@ class TestSplitVideo:
             assert len(result) == 2
             assert part1 in result
             assert part2 in result
-            mock_run.assert_called_once()
+            # Should have called ffprobe for duration and then ffmpeg for split
+            assert mock_run.call_count == 2
 
     @patch("subprocess.run")
     def test_split_video_ffmpeg_failure(

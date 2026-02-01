@@ -87,22 +87,57 @@ class Splitter:
         )
 
         try:
+            # FFmpeg's segment muxer doesn't support -segment_size directly.
+            # We must calculate duration based on bitrate.
+            # Get duration and bitrate using ffprobe
+            probe_cmd = [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration,bitrate",
+                "-of",
+                "default=noprint_wrappers=1",
+                str(input_path),
+            ]
+            probe_res = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            
+            # Parse output lines like "duration=19.133243"
+            probe_data = {}
+            for line in probe_res.stdout.strip().split("\n"):
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    probe_data[k.strip()] = v.strip()
+            
+            duration = float(probe_data.get("duration", 0))
+            bitrate = float(probe_data.get("bitrate", 0))
+
+            if bitrate <= 0:
+                # Fallback: estimate bitrate from file size
+                if duration > 0:
+                    bitrate = (input_path.stat().st_size * 8) / duration
+                else:
+                    bitrate = 1_000_000 # 1 Mbps fallback
+
+            # Target duration (s) = target size (bits) / bitrate (bits/s)
+            target_duration = (max_size_bytes * 8) / bitrate
+            # Use slightly less to be safe
+            target_duration = max(1.0, target_duration * 0.95)
+
             cmd = [
                 "ffmpeg",
                 "-i",
                 str(input_path),
                 "-c",
-                "copy",  # No re-encoding
+                "copy",
                 "-map",
-                "0",  # Copy all streams
+                "0",
                 "-f",
-                "segment",  # Use segment muxer
-                "-segment_time_metadata",
-                "1",  # Add metadata
-                "-segment_size",
-                str(max_size_bytes),
+                "segment",
+                "-segment_time",
+                str(target_duration),
                 "-reset_timestamps",
-                "1",  # Reset timestamps for each segment
+                "1",
                 output_pattern,
             ]
 

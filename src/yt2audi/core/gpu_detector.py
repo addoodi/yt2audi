@@ -4,6 +4,15 @@ import subprocess
 from enum import Enum
 
 import structlog
+try:
+    import py3nvml.py3nvml as nvml
+except ImportError:
+    nvml = None
+
+try:
+    import GPUtil
+except ImportError:
+    GPUtil = None
 
 from yt2audi.exceptions import GPUDetectionError
 from yt2audi.models.profile import EncoderType
@@ -46,9 +55,10 @@ def detect_nvidia_gpu() -> GPUInfo | None:
     Returns:
         GPUInfo if NVIDIA GPU found, None otherwise
     """
-    try:
-        import py3nvml.py3nvml as nvml
+    if nvml is None:
+        return None
 
+    try:
         nvml.nvmlInit()
         device_count = nvml.nvmlDeviceGetCount()
 
@@ -78,9 +88,10 @@ def detect_amd_gpu() -> GPUInfo | None:
     Returns:
         GPUInfo if AMD GPU found, None otherwise
     """
-    try:
-        import GPUtil
+    if GPUtil is None:
+        return None
 
+    try:
         gpus = GPUtil.getGPUs()
         for gpu in gpus:
             if "amd" in gpu.name.lower() or "radeon" in gpu.name.lower():
@@ -103,9 +114,10 @@ def detect_intel_gpu() -> GPUInfo | None:
     Returns:
         GPUInfo if Intel GPU found, None otherwise
     """
-    try:
-        import GPUtil
+    if GPUtil is None:
+        return None
 
+    try:
         gpus = GPUtil.getGPUs()
         for gpu in gpus:
             if "intel" in gpu.name.lower():
@@ -271,12 +283,12 @@ def get_encoder_extra_args(encoder: EncoderType, quality_cq: int) -> list[str]:
     args: list[str] = []
 
     if encoder == EncoderType.NVENC_H264:
-        args.extend(["-rc", "vbr", "-cq", str(quality_cq)])
+        args.extend(["-rc:v:0", "vbr", "-cq:v:0", str(quality_cq)])
     elif encoder == EncoderType.AMF_H264:
-        args.extend(["-rc", "vbr_latency", "-qp_i", str(quality_cq)])
+        args.extend(["-rc:v:0", "vbr_latency", "-qp_i:v:0", str(quality_cq)])
     elif encoder == EncoderType.QSV_H264:
-        args.extend(["-global_quality", str(quality_cq)])
+        args.extend(["-global_quality:v:0", str(quality_cq)])
     elif encoder == EncoderType.LIBX264:
-        args.extend(["-crf", str(quality_cq)])
+        args.extend(["-crf:v:0", str(quality_cq)])
 
     return args

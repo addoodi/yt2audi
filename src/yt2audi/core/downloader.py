@@ -1,11 +1,13 @@
 """Video downloader using yt-dlp."""
 
+import asyncio
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import structlog
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from yt2audi.core.cache import MetadataCache
 from yt2audi.exceptions import DownloadError
 from yt2audi.models.profile import DownloadConfig, Profile
 from yt2audi.utils import get_temp_dir, is_valid_url, is_youtube_url, sanitize_filename
@@ -25,8 +27,63 @@ class Downloader:
         self.profile = profile
         self.download_config = profile.download
         self.temp_dir = get_temp_dir()
+        self.cache = MetadataCache()
 
         logger.info("downloader_initialized", profile=profile.profile.name)
+
+    async def extract_info_async(self, url: str) -> dict[str, Any]:
+        """Extract video info asynchronously.
+        
+        Args:
+            url: YouTube URL
+            
+        Returns:
+            yt-dlp info dictionary
+        """
+        return await asyncio.to_thread(self.extract_info, url)
+
+    def extract_info(self, url: str) -> dict[str, Any]:
+        """Extract video info.
+        
+        Args:
+            url: YouTube URL
+            
+        Returns:
+            yt-dlp info dictionary
+            
+        Raises:
+            ValueError: If URL is invalid
+            DownloadError: If extraction fails
+        """
+        if not is_valid_url(url):
+            raise ValueError(f"Invalid URL: {url}")
+            
+        # Check cache
+        cached = self.cache.get(url)
+        if cached:
+            return cached
+            
+        ydl_opts = self._get_ydl_opts("dummy", ignore_archive=True)
+        # Faster extraction
+        ydl_opts.update({
+            "skip_download": True,
+            "extract_flat": "in_playlist", # Don't expand playlists fully on simple check
+        })
+        
+        try:
+            import yt_dlp
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    raise DownloadError(f"Failed to extract info for {url}")
+                
+                # Cache result
+                self.cache.set(url, info)
+                return info
+                
+        except Exception as e:
+            logger.error("extract_info_failed", url=url, error=str(e))
+            raise DownloadError(f"Failed to extract info for {url}: {e}") from e
 
     def _build_optimized_format_string(self) -> str:
         """Build yt-dlp format string optimized for profile's target output.
@@ -137,6 +194,7 @@ class Downloader:
         output_template: str,
         progress_hook: Callable[[dict[str, Any]], None] | None = None,
         use_optimized_format: bool = True,
+        ignore_archive: bool = False,
     ) -> dict[str, Any]:
         """Build yt-dlp options dictionary.
 
@@ -144,6 +202,7 @@ class Downloader:
             output_template: Output filename template
             progress_hook: Optional progress callback
             use_optimized_format: Use profile-optimized format string (default: True)
+            ignore_archive: Ignore download archive (force download)
 
         Returns:
             yt-dlp options dictionary
@@ -168,19 +227,63 @@ class Downloader:
             "quiet": False,
             "no_color": True,
             # Bypassing 403s and blocklists:
-            # Force mobile clients which are often less restricted than web clients
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "web"],
-                    "player_skip": ["webpage", "configs", "js"],
-                }
-            },
+            # We avoid hardcoding specific clients (like android/ios) unless we have a PO Token
+            # because yt-dlp might fail if those clients are enforced without a token.
+            # "extractor_args": {
+            #     "youtube": {
+            #         "player_client": ["android", "ios", "web"],
+            #         "player_skip": ["webpage", "configs", "js"],
+            #     }
+            # },
             # Use IPv4 as IPv6 often triggers blocks
             "source_address": "0.0.0.0",
+            # Resume support
+            "continuedl": True,
+            "nopart": False,  # Use .part files for better resume detection
+            "hls_prefer_native": True, # Better for long streams
+            "concurrent_fragment_downloads": 3, # Speed up multi-part downloads
+            # Thumbnail downloading
+            "writethumbnail": True,
+            "postprocessors": [
+                {
+                    "key": "FFmpegThumbnailsConvertor",
+                    "format": "jpg",
+                }
+            ],
+            # JS Runtime - helps with YouTube extraction scripts
+            "js_runtimes": {"node": {}},
+            "remote_components": ["ejs:github"],
         }
+        
+        # Authentication / PO Token
+        if self.download_config.cookies_from_browser:
+            opts["cookiesfrombrowser"] = (self.download_config.cookies_from_browser, None, None, None)
+        
+        if self.download_config.cookies_file:
+            cookies_path = expand_path(self.download_config.cookies_file)
+            if cookies_path.exists():
+                opts["cookiefile"] = str(cookies_path)
+
+        # PO Token handling
+        if self.download_config.po_token:
+            # If token provided, we can try to force clients or just pass the token
+            # Note: PO Token format for args is usually "youtube:po_token=web+<token>" etc.
+            # But the user asked to "adjust accordingly" based on the guide.
+            # We will pass it for web+ios+android as safest bet if provided.
+            token = self.download_config.po_token
+            opts["extractor_args"] = {
+                "youtube": {
+                    "po_token": [
+                        f"web+{token}", 
+                        f"ios+{token}",
+                        f"android+{token}"
+                    ]
+                }
+            }
 
         # Download archive for resume functionality
-        if self.download_config.download_archive:
+        # We skip archive if explicitly requested (e.g. for temp downloads)
+        if self.download_config.download_archive and not ignore_archive:
             archive_path = expand_path(self.download_config.download_archive)
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             opts["download_archive"] = str(archive_path)
@@ -208,7 +311,7 @@ class Downloader:
         url: str,
         output_dir: Path | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
-    ) -> Path:
+    ) -> tuple[Path, dict[str, Any]]:
         """Download a single video.
 
         Args:
@@ -217,7 +320,7 @@ class Downloader:
             progress_callback: Optional callback for progress updates
 
         Returns:
-            Path to downloaded video file
+            Tuple of (Path to downloaded video file, info_dict)
 
         Raises:
             DownloadError: If download fails
@@ -240,7 +343,13 @@ class Downloader:
         try:
             import yt_dlp
 
-            ydl_opts = self._get_ydl_opts(str(output_template), progress_callback)
+            # Ignore archive for single video downloads to ensure we get the file
+            # even if it was previously recorded but deleted.
+            ydl_opts = self._get_ydl_opts(
+                str(output_template), 
+                progress_callback,
+                ignore_archive=True
+            )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Extract info first
@@ -265,7 +374,7 @@ class Downloader:
                     size_mb=output_path.stat().st_size / 1024 / 1024,
                 )
 
-                return output_path
+                return output_path, info
 
         except yt_dlp.utils.DownloadError as e:
             logger.error("download_failed", url=url, error=str(e))
@@ -274,28 +383,119 @@ class Downloader:
             logger.error("download_error", url=url, error=str(e))
             raise DownloadError(f"Unexpected error downloading {url}: {e}") from e
 
-    def download_batch(
+    async def download_video_async(
+        self,
+        url: str,
+        output_dir: Path | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[Path, dict[str, Any]]:
+        """Download a single video asynchronously.
+
+        Args:
+            url: YouTube video URL
+            output_dir: Output directory
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Tuple of (Path to downloaded video file, info_dict)
+        """
+        return await asyncio.to_thread(
+            self.download_video, url, output_dir, progress_callback
+        )
+
+    async def download_batch_async(
         self,
         urls: list[str],
         output_dir: Path | None = None,
         progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        max_concurrent: int = 3,
     ) -> list[Path]:
-        """Download multiple videos sequentially.
+        """Download multiple videos concurrently.
 
         Args:
             urls: List of YouTube URLs
             output_dir: Output directory
             progress_callback: Optional callback(url, progress_dict)
+            max_concurrent: Maximum number of concurrent downloads
 
         Returns:
             List of paths to downloaded videos
-
-        Note:
-            Failed downloads are logged but don't stop the batch.
-            Check return list length vs input list length to detect failures.
         """
         output_dir = output_dir or self.temp_dir
-        downloaded_paths: list[Path] = []
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        logger.info("async_batch_download_started", url_count=len(urls), concurrent=max_concurrent)
+
+        async def _download_task(url: str) -> Path | None:
+            async with semaphore:
+                try:
+                    # Wrap progress callback to include URL
+                    def _progress_hook(d: dict[str, Any]) -> None:
+                        if progress_callback:
+                            progress_callback(url, d)
+
+                    return await self.download_video_async(url, output_dir, _progress_hook)
+                except Exception as e:
+                    logger.error("async_batch_item_failed", url=url, error=str(e))
+                    return None
+
+        # Create tasks for all URLs
+        tasks = [_download_task(url) for url in urls]
+        
+        # Run tasks and wait for completion
+        results = await asyncio.gather(*tasks)
+        
+        # Filter out failures
+        successful_results = [r for r in results if r is not None]
+        # successful_results is a list of (Path, dict)
+
+        logger.info(
+            "async_batch_download_completed",
+            total=len(urls),
+            succeeded=len(successful_results),
+            failed=len(urls) - len(successful_results),
+        )
+
+        return successful_results
+
+    def download_batch(
+        self,
+        urls: list[str],
+        output_dir: Path | None = None,
+        progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        use_async: bool = False,
+        max_concurrent: int = 3,
+    ) -> list[Path]:
+        """Download multiple videos.
+
+        Args:
+            urls: List of YouTube URLs
+            output_dir: Output directory
+            progress_callback: Optional callback(url, progress_dict)
+            use_async: Whether to use concurrent downloads
+            max_concurrent: Max concurrent downloads if use_async is True
+
+        Returns:
+            List of paths to downloaded videos
+        """
+        if use_async:
+            try:
+                try:
+                    loop = asyncio.get_event_loop()
+                    return loop.run_until_complete(
+                        self.download_batch_async(urls, output_dir, progress_callback, max_concurrent)
+                    )
+                except RuntimeError:
+                    # If loop is already running, we can't use run_until_complete
+                    # This shouldn't happen in the CLI as it's currently synchronous
+                    logger.warning("async_batch_loop_running_trying_fallback")
+                    pass
+            except Exception as e:
+                logger.warning("async_batch_failed_falling_back_to_sync", error=str(e))
+                # Fallback to sync
+
+        output_dir = output_dir or self.temp_dir
+        results: list[tuple[Path, dict[str, Any]]] = []
 
         logger.info("batch_download_started", url_count=len(urls))
 
@@ -308,8 +508,8 @@ class Downloader:
                     if progress_callback:
                         progress_callback(url, d)
 
-                path = self.download_video(url, output_dir, _progress_hook)
-                downloaded_paths.append(path)
+                path, info = self.download_video(url, output_dir, _progress_hook)
+                results.append((path, info))
 
             except Exception as e:
                 logger.error("batch_item_failed", url=url, error=str(e))
@@ -318,11 +518,11 @@ class Downloader:
         logger.info(
             "batch_download_completed",
             total=len(urls),
-            succeeded=len(downloaded_paths),
-            failed=len(urls) - len(downloaded_paths),
+            succeeded=len(results),
+            failed=len(urls) - len(results),
         )
 
-        return downloaded_paths
+        return results
 
     @retry(
         stop=stop_after_attempt(3),
@@ -406,11 +606,58 @@ class Downloader:
             logger.error("playlist_error", url=playlist_url, error=str(e))
             raise DownloadError(f"Unexpected error downloading playlist {playlist_url}: {e}") from e
 
-    def get_video_info(self, url: str) -> dict[str, Any]:
+    async def get_playlist_urls_async(self, playlist_url: str) -> list[str]:
+        """Extract video URLs from a playlist asynchronously.
+
+        Args:
+            playlist_url: YouTube playlist URL
+
+        Returns:
+            List of video URLs
+        """
+        return await asyncio.to_thread(self.get_playlist_urls, playlist_url)
+
+    def get_playlist_urls(self, playlist_url: str) -> list[str]:
+        """Extract video URLs from a playlist.
+
+        Args:
+            playlist_url: YouTube playlist URL
+
+        Returns:
+            List of video URLs
+        """
+        import yt_dlp
+
+        ydl_opts = {
+            "extract_flat": True,
+            "quiet": True,
+            "no_warnings": True,
+            "playliststart": self.download_config.playlist_start,
+            "playlistend": self.download_config.playlist_end,
+            "playlist_reverse": self.download_config.playlist_reverse,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(playlist_url, download=False)
+                if not info or "entries" not in info:
+                    return []
+
+                return [
+                    f"https://www.youtube.com/watch?v={entry['id']}"
+                    for entry in info["entries"]
+                    if entry.get("id")
+                ]
+        except Exception as e:
+            logger.error("playlist_extraction_failed", url=playlist_url, error=str(e))
+            return []
+
+    def extract_info(self, url: str, download: bool = False) -> dict[str, Any]:
         """Extract video information without downloading.
 
         Args:
             url: YouTube video URL
+            download: Whether to download the video
 
         Returns:
             Dictionary with video metadata
@@ -423,6 +670,11 @@ class Downloader:
 
         logger.info("extracting_video_info", url=url)
 
+        # Try cache first
+        cached_info = self.cache.get(url)
+        if cached_info:
+            return cached_info
+
         try:
             import yt_dlp
 
@@ -433,28 +685,9 @@ class Downloader:
                 if not info:
                     raise DownloadError(f"Could not extract info from {url}")
 
-                # Extract relevant fields
-                metadata = {
-                    "id": info.get("id"),
-                    "title": info.get("title"),
-                    "uploader": info.get("uploader"),
-                    "duration": info.get("duration"),  # seconds
-                    "view_count": info.get("view_count"),
-                    "like_count": info.get("like_count"),
-                    "upload_date": info.get("upload_date"),
-                    "description": info.get("description"),
-                    "thumbnail": info.get("thumbnail"),
-                    "formats": len(info.get("formats", [])),
-                }
-
-                logger.info(
-                    "video_info_extracted",
-                    url=url,
-                    title=metadata["title"],
-                    duration=metadata["duration"],
-                )
-
-                return metadata
+                # Cache the result
+                self.cache.set(url, info)
+                return info
 
         except Exception as e:
             logger.error("info_extraction_failed", url=url, error=str(e))

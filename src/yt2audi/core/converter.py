@@ -1,5 +1,6 @@
 """Video converter using FFmpeg with GPU acceleration."""
 
+import asyncio
 import json
 import re
 import subprocess
@@ -111,11 +112,48 @@ class Converter:
 
         # Select best encoder
         self.encoder = select_best_encoder(self.video_config.encoder_priority)
+
         logger.info(
-            "converter_initialized",
-            profile=profile.profile.name,
-            encoder=self.encoder.value,
+            "converter_initialized", profile=profile.profile.name, encoder=self.encoder.value
         )
+
+    def get_output_path(self, info_dict: dict[str, Any], output_dir: Path | None = None) -> Path:
+        """Predict the output path for a video based on its info dictionary.
+
+        Args:
+            info_dict: Video info from yt-dlp
+            output_dir: Target output directory
+
+        Returns:
+            Predicted output Path
+        """
+        from yt2audi.utils import sanitize_filename
+        from yt2audi.config import expand_path
+
+        if output_dir is None:
+            output_dir = expand_path(self.output_config.output_dir)
+
+        template = self.output_config.filename_template
+
+        # Prepare context for template
+        title = info_dict.get("title", "video")
+        video_id = info_dict.get("id", "none")
+        uploader = info_dict.get("uploader", "unknown")
+
+        ctx = {
+            "title": sanitize_filename(title),
+            "id": video_id,
+            "uploader": sanitize_filename(uploader),
+            "ext": self.output_config.container,
+        }
+
+        try:
+            filename = template.format(**ctx)
+        except Exception:
+            # Fallback to standard
+            filename = f"{ctx['title']}_{ctx['id']}.{ctx['ext']}"
+
+        return output_dir / filename
 
     def probe_video(self, input_path: Path) -> VideoMetadata:
         """Extract video metadata using FFprobe.
@@ -181,6 +219,8 @@ class Converter:
         input_path: Path,
         output_path: Path,
         metadata: VideoMetadata,
+        info_dict: dict[str, Any] | None = None,
+        thumbnail_path: Path | None = None,
     ) -> list[str]:
         """Build FFmpeg command with all parameters.
 
@@ -188,14 +228,27 @@ class Converter:
             input_path: Input video file
             output_path: Output video file
             metadata: Video metadata from probe
+            info_dict: Optional YouTube info dictionary for metadata
+            thumbnail_path: Optional path to thumbnail image
 
         Returns:
             FFmpeg command as list of arguments
         """
         cmd = ["ffmpeg", "-i", str(input_path)]
 
-        # Video encoding
-        cmd.extend(["-c:v", self.encoder.value])
+        if thumbnail_path and thumbnail_path.exists():
+            cmd.extend(["-i", str(thumbnail_path)])
+
+        # Map main video and audio, then thumbnail and metadata
+        cmd.extend(["-map", "0:v:0", "-map", "0:a:0"])
+        
+        if thumbnail_path and thumbnail_path.exists():
+            cmd.extend(["-map", "1:v:0"])
+            # Set thumbnail as a non-encoded attached pic
+            cmd.extend(["-c:v:1", "mjpeg", "-disposition:v:1", "attached_pic"])
+
+        # Video encoding (stream 0)
+        cmd.extend(["-c:v:0", self.encoder.value])
 
         # Encoder preset
         preset = get_encoder_preset(self.encoder)
@@ -206,11 +259,11 @@ class Converter:
         cmd.extend(extra_args)
 
         # Profile and level
-        cmd.extend(["-profile:v", self.video_config.profile])
-        cmd.extend(["-level", self.video_config.level])
+        cmd.extend(["-profile:v:0", self.video_config.profile])
+        cmd.extend(["-level:v:0", self.video_config.level])
 
         # Pixel format
-        cmd.extend(["-pix_fmt", self.video_config.pixel_format])
+        cmd.extend(["-pix_fmt:v:0", self.video_config.pixel_format])
 
         # Resolution scaling and FPS limiting
         vf_filters = []
@@ -234,29 +287,58 @@ class Converter:
             vf_filters.append(f"fps=fps={self.video_config.max_fps}")
 
         if vf_filters:
-            cmd.extend(["-vf", ",".join(vf_filters)])
+            cmd.extend(["-vf:v:0", ",".join(vf_filters)])
 
         # Bitrate limiting
         if self.video_config.max_bitrate_mbps != "auto":
             bitrate_mbps = float(self.video_config.max_bitrate_mbps)
             bitrate_kbps = int(bitrate_mbps * 1000)
-            cmd.extend(["-b:v", f"{bitrate_kbps}k"])
-            cmd.extend(["-maxrate", f"{bitrate_kbps}k"])
-            cmd.extend(["-bufsize", f"{bitrate_kbps * 2}k"])
+            cmd.extend(["-b:v:0", f"{bitrate_kbps}k"])
+            cmd.extend(["-maxrate:v:0", f"{bitrate_kbps}k"])
+            cmd.extend(["-bufsize:v:0", f"{bitrate_kbps * 2}k"])
 
         # Extra video args
         if self.video_config.extra_video_args:
             cmd.extend(self.video_config.extra_video_args)
 
         # Audio encoding
-        cmd.extend(["-c:a", self.audio_config.codec])
-        cmd.extend(["-b:a", f"{self.audio_config.bitrate_kbps}k"])
-        cmd.extend(["-ar", str(self.audio_config.sample_rate)])
-        cmd.extend(["-ac", str(self.audio_config.channels)])
+        cmd.extend(["-c:a:0", self.audio_config.codec])
+        cmd.extend(["-b:a:0", f"{self.audio_config.bitrate_kbps}k"])
+        cmd.extend(["-ar:a:0", str(self.audio_config.sample_rate)])
+        cmd.extend(["-ac:a:0", str(self.audio_config.channels)])
 
         # Extra audio args
         if self.audio_config.extra_audio_args:
             cmd.extend(self.audio_config.extra_audio_args)
+
+        # Metadata
+        if info_dict:
+            title = info_dict.get("title")
+            if title:
+                cmd.extend(["-metadata", f"title={title}"])
+            
+            uploader = info_dict.get("uploader") or info_dict.get("artist")
+            if uploader:
+                cmd.extend(["-metadata", f"artist={uploader}"])
+                cmd.extend(["-metadata", f"album_artist={uploader}"])
+            
+            # Additional tags for car MMI
+            album = info_dict.get("playlist_title") or info_dict.get("album") or "YouTube"
+            cmd.extend(["-metadata", f"album={album}"])
+            
+            # Format date (YYYYMMDD to YYYY-MM-DD)
+            upload_date = info_dict.get("upload_date")
+            if upload_date and len(upload_date) == 8:
+                formatted_date = f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:]}"
+                cmd.extend(["-metadata", f"date={formatted_date}"])
+            elif upload_date:
+                cmd.extend(["-metadata", f"date={upload_date}"])
+
+            cmd.extend(["-metadata", "genre=Video"])
+                
+            video_id = info_dict.get("id")
+            if video_id:
+                cmd.extend(["-metadata", f"comment=YouTube ID: {video_id}"])
 
         # Strip unwanted streams
         cmd.extend(["-sn"])  # No subtitles (unless embedding)
@@ -278,6 +360,8 @@ class Converter:
         output_dir: Path | None = None,
         output_filename: str | None = None,
         progress_callback: Callable[[float, str], None] | None = None,
+        info_dict: dict[str, Any] | None = None,
+        thumbnail_path: Path | None = None,
     ) -> Path:
         """Convert video according to profile settings.
 
@@ -329,7 +413,13 @@ class Converter:
         if progress_callback:
             progress_callback(10.0, "Building conversion command")
 
-        cmd = self.build_ffmpeg_command(input_path, output_path, metadata)
+        cmd = self.build_ffmpeg_command(
+            input_path, 
+            output_path, 
+            metadata,
+            info_dict=info_dict,
+            thumbnail_path=thumbnail_path
+        )
 
         logger.debug("ffmpeg_command", cmd=" ".join(cmd))
 
@@ -349,7 +439,8 @@ class Converter:
 
             duration = metadata.duration
 
-            for line in iter(process.stdout.readline, ""):  # type: ignore
+            while True:
+                line = process.stdout.readline()
                 if not line:
                     break
 
@@ -399,6 +490,179 @@ class Converter:
                     logger.info("cleaned_up_failed_output", path=str(output_path))
                 except Exception:
                     pass
+
+    async def probe_video_async(self, input_path: Path) -> VideoMetadata:
+        """Extract video metadata using FFprobe asynchronously.
+
+        Args:
+            input_path: Path to video file
+
+        Returns:
+            VideoMetadata object
+        """
+        # Run sync version in thread for simplicity if we don't want to refactor to subprocess
+        return await asyncio.to_thread(self.probe_video, input_path)
+
+    async def convert_video_async(
+        self,
+        input_path: Path,
+        output_dir: Path | None = None,
+        output_filename: str | None = None,
+        progress_callback: Callable[[float, str], None] | None = None,
+        info_dict: dict[str, Any] | None = None,
+        thumbnail_path: Path | None = None,
+    ) -> Path:
+        """Convert video according to profile settings asynchronously.
+
+        Args:
+            input_path: Input video file
+            output_dir: Output directory
+            output_filename: Output filename
+            progress_callback: Optional callback(percent, stage)
+
+        Returns:
+            Path to converted video
+        """
+        if not input_path.exists():
+            raise ConversionError(f"Input file not found: {input_path}")
+
+        from yt2audi.config import expand_path
+        from yt2audi.utils import sanitize_filename
+
+        if output_dir is None:
+            output_dir = expand_path(self.output_config.output_dir)
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if output_filename is None:
+            output_filename = sanitize_filename(input_path.stem) + f".{self.output_config.container}"
+
+        output_path = output_dir / output_filename
+        output_path = ensure_extension(output_path, self.output_config.container)
+        output_path = get_unique_path(output_path)
+
+        logger.info(
+            "async_conversion_started",
+            input=str(input_path),
+            output=str(output_path),
+            encoder=self.encoder.value,
+        )
+
+        try:
+            if progress_callback:
+                progress_callback(5.0, "Analyzing video")
+
+            # We reuse the sync probe logic but run it in a thread to be async-friendly
+            metadata = await self.probe_video_async(input_path)
+            duration = metadata.duration
+
+            if progress_callback:
+                progress_callback(10.0, "Building conversion command")
+
+            # Reuse the command builder from the sync version
+            cmd_args = self.build_ffmpeg_command(
+                input_path, 
+                output_path, 
+                metadata, 
+                info_dict=info_dict, 
+                thumbnail_path=thumbnail_path
+            )
+            # cmd is a list, create_subprocess_exec takes program as first arg, then *args
+
+            if progress_callback:
+                progress_callback(15.0, "Converting video")
+
+            # Create the subprocess
+            # Note: create_subprocess_exec requires the program as the first argument,
+            # and the rest as separate arguments. cmd_args[0] is 'ffmpeg'.
+            process = await asyncio.create_subprocess_exec(
+                cmd_args[0], *cmd_args[1:],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+
+            # Read output for progress
+            # We read chunks because FFmpeg uses \r for progress which can cause 
+            # asyncio's readline() to hit buffer limits if no \n is found.
+            buffer = ""
+            last_lines = [] # Keep last few lines for error reporting
+            while True:
+                chunk_bytes = await process.stdout.read(4096)
+                if not chunk_bytes:
+                    break
+                
+                # Decode and accrue
+                chunk_str = chunk_bytes.decode("utf-8", errors="replace")
+                buffer += chunk_str
+                
+                # Process complete lines or carriage returns
+                while True:
+                    # Find nearest newline or carriage return
+                    match = re.search(r"[\r\n]", buffer)
+                    if not match:
+                        break
+                    
+                    line_end = match.end()
+                    line = buffer[:line_end].strip()
+                    buffer = buffer[line_end:]
+                    
+                    if not line:
+                        continue
+                    
+                    # Store line for error reporting (keep last 10)
+                    last_lines.append(line)
+                    if len(last_lines) > 10:
+                        last_lines.pop(0)
+
+                    # Parse progress
+                    # FFmpeg output example: "frame= 1234 ... time=00:01:23.45 ..."
+                    if progress_callback and "time=" in line:
+                        time_match = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
+                        if time_match and duration > 0:
+                            try:
+                                hours, minutes, seconds = time_match.groups()
+                                current_time = (
+                                    int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                                )
+                                # Map progress from 15% to 95%
+                                percent = min(95.0, 15.0 + (current_time / duration * 80.0))
+                                progress_callback(percent, "Converting video")
+                            except ValueError:
+                                pass
+
+            return_code = await process.wait()
+
+            if return_code != 0:
+                error_context = "\n".join(last_lines)
+                logger.error("ffmpeg_async_failed", return_code=return_code, last_output=error_context)
+                raise ConversionError(f"FFmpeg exited with code {return_code}. Last output:\n{error_context}")
+
+            if not output_path.exists():
+                raise ConversionError(f"Conversion completed but output file not found: {output_path}")
+
+            if progress_callback:
+                progress_callback(100.0, "Conversion complete")
+            
+            logger.info(
+                "async_conversion_completed",
+                input=str(input_path),
+                output=str(output_path),
+                output_size_mb=output_path.stat().st_size / 1024 / 1024,
+            )
+
+            return output_path
+
+        except Exception as e:
+            logger.error("async_conversion_error", input=str(input_path), error=str(e))
+            if output_path.exists():
+                try:
+                    output_path.unlink()
+                except Exception:
+                    pass
+            # Re-raise as ConversionError
+            if isinstance(e, ConversionError):
+                raise
+            raise ConversionError(f"Async conversion failed: {e}") from e
 
     def estimate_output_size(self, input_path: Path) -> float:
         """Estimate output file size in GB.

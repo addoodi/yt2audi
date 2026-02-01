@@ -16,6 +16,9 @@ echo.
 echo ================================================================================
 echo.
 
+:: Ensure src is in PYTHONPATH so we can run without installing
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
+
 :MAIN_MENU
 echo Select an option:
 echo.
