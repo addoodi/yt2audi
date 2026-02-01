@@ -115,3 +115,9 @@ yt-dlp_win.zip
 test_output/
 regression_test/
 phase_reports/
+
+# Runtime tracking
+.downloaded_videos.txt
+.history.txt
+history.txt
+archive.txt
